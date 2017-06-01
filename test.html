@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+</head>
+<body>
+<script>
+    let socket;
+    let times = 1000;
+    initConnections()
+        .then(() => measure('http1', times, () => httpRequest('http://localhost:8091')))
+        .then(() => measure('http2', times, () => httpRequest('https://localhost:8090')))
+        .then(() => measure('ws', times, () => wsRequest(socket)));
+
+    function initConnections() {
+        return Promise.all([
+            new Promise((resolve, reject) => {
+                socket = new WebSocket("ws://localhost:8092");
+                socket.onopen = resolve;
+                socket.onerror = reject
+            }),
+            httpRequest('http://localhost:8091'),
+            httpRequest('https://localhost:8090')
+        ])
+    }
+
+    function measure(name, times, fn) {
+        return new Promise((resolve, reject) => {
+            const start = Date.now();
+            let now = Date.now();
+            let last = 0;
+            let latencyTotal = 0;
+            let latencyMin = 1000000;
+            let latencyMax = 0;
+            let counter = times;
+
+            function tryOneMoreTime() {
+                last = now;
+                now = Date.now();
+                let currentLatency = now - last;
+                if (currentLatency > latencyMax) latencyMax = currentLatency;
+                if (currentLatency < latencyMin) latencyMin = currentLatency;
+
+                latencyTotal += currentLatency;
+                counter -= 1;
+                if (counter > 0) {
+                    fn().then(tryOneMoreTime).catch(reject);
+                } else {
+                    const timeTotal = now - start;
+                    const latency = latencyTotal / times;
+                    console.log(`[${name}] invoked ${times} times within: ${timeTotal}ms; latency: ${latency}ms, min: ${latencyMin}ms, max: ${latencyMax}ms`);
+                    resolve();
+                }
+            }
+
+            fn().then(tryOneMoreTime).catch(reject);
+        });
+    }
+
+    function httpRequest(path) {
+        return new Promise(function (resolve, reject) {
+            const httpRequest = new XMLHttpRequest();
+            httpRequest.onreadystatechange = function () {
+                if (httpRequest.readyState === XMLHttpRequest.DONE) {
+                    if (httpRequest.status >= 200 && httpRequest.status < 300) {
+                        resolve(httpRequest.responseText, httpRequest.status);
+                    } else {
+                        reject(httpRequest.responseText, httpRequest.status)
+                    }
+                }
+            };
+            httpRequest.open("GET", path);
+            httpRequest.send("test");
+        })
+    }
+
+    function wsRequest(socket) {
+        return new Promise((resolve, reject) => {
+            socket.onmessage = resolve;
+            socket.onerror = reject;
+            socket.send("test")
+        });
+    }
+</script>
+</body>
+</html>
